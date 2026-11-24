@@ -9,9 +9,27 @@ jobs:
     permissions:
       pull-requests: write
       contents: write
-    if: ${{ github.actor == 'dependabot[bot]'}}
+    if: ${{ !github.event.repository.fork && github.actor == 'dependabot[bot]' }}
     steps:
-      - run: gh pr merge --squash --auto "$PR_URL"
+      - name: Squash merge the Dependabot update
+        run: |
+          # GitHub computes mergeability asynchronously when the bot pushes.
+          for attempt in {1..10}; do
+            case "$(gh pr view "$PR_URL" --json mergeable --jq .mergeable)" in
+              MERGEABLE)
+                gh pr merge --squash --match-head-commit "$PR_HEAD_SHA" "$PR_URL"
+                exit 0
+                ;;
+              CONFLICTING)
+                echo "The pull request has merge conflicts" >&2
+                exit 1
+                ;;
+            esac
+            sleep 3
+          done
+          echo "GitHub did not confirm pull request mergeability" >&2
+          exit 1
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
